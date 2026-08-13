@@ -7,7 +7,7 @@ Ultimate_examer 是一個不綁定特定考試的選擇題考試與練習 GUI。
 - Practice Mode：逐題即時判定、顯示正確答案與紅／綠回饋。
 - Exam Mode：設定題數，交卷前隱藏答案，交卷後統一計分與顯示結果。
 - Wrong Answer Mode：持久保存錯題並再次練習；答對後從下一次錯題 session 移除。
-- Sequential／Random 題目順序，多題庫可合併使用。
+- 全部依序、指定題數隨機抽題、指定 1-based 題目範圍；多題庫可合併使用。
 - Previous、Next 與題目清單跳轉，保留 session 內的作答狀態。
 - 繁體中文／English 介面。
 - GUI 按鈕、`Ctrl + +`、`Ctrl + -`、`Ctrl + 滑鼠滾輪`調整字體大小。
@@ -21,7 +21,7 @@ Ultimate_examer 是一個不綁定特定考試的選擇題考試與練習 GUI。
 python app.py
 ```
 
-啟動後選擇一個或多個題庫、模式與題目順序，再按「開始」。Exam Mode 另需設定題數。錯題紀錄會寫入根目錄的 `wrong_answers.json`。
+啟動後選擇一個或多個題庫、模式與出題方式，再按「開始」。隨機抽題需設定題數；指定範圍需設定起點與終點。錯題紀錄會寫入根目錄的 `wrong_answers.json`。
 
 ## 加入新題庫
 

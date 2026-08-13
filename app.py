@@ -16,7 +16,7 @@ TEXT = {
     "zh-Hant": {
         "choose_banks": "選擇題庫", "json_banks": "JSON 題庫", "no_banks_selected": "尚未選擇題庫", "selected_banks": "已選擇 {count} 個：{names}",
         "mode": "模式：", "practice": "練習", "exam": "考試", "wrong_answer": "錯題練習",
-        "order": "順序：", "sequential": "依序", "random": "隨機", "count": "題數：", "start": "開始",
+        "order": "出題方式：", "all": "全部依序", "random": "隨機抽題", "range": "指定範圍", "count": "題數：", "range_start": "起點：", "range_end": "終點：", "start": "開始",
         "clear_selected": "清除所選題庫錯題", "font_size": "字體大小", "language": "語言：",
         "welcome": "選擇一個或多個題庫後開始練習。", "question": "題目", "status": "狀態",
         "question_position": "題目 {current} / {total}", "previous": "上一題", "next": "下一題", "submit": "交卷",
@@ -25,6 +25,7 @@ TEXT = {
         "choose_bank_first": "請先選擇至少一個題庫。", "bank_error": "題庫錯誤", "wrong_error": "錯題紀錄錯誤",
         "wrong_unavailable": "錯題紀錄無法載入。", "count_error": "題數錯誤", "no_wrong_title": "無錯題",
         "invalid_count": "題數必須介於 1 和 {maximum} 之間。",
+        "invalid_range": "範圍必須符合 1 ≤ 起點 ≤ 終點 ≤ {maximum}。",
         "no_wrong": "選取的題庫目前沒有錯題紀錄。", "submit_confirm": "確定要交卷並批改嗎？",
         "exam_result": "考試結果", "score": "得分：{score} / {total}", "clear_title": "清除錯題",
         "clear_confirm": "確定清除目前所選題庫的所有錯題紀錄嗎？", "clear_done": "已清除目前所選題庫的錯題紀錄。",
@@ -32,7 +33,7 @@ TEXT = {
     "en": {
         "choose_banks": "Choose Banks", "json_banks": "JSON Question Banks", "no_banks_selected": "No question bank selected", "selected_banks": "Selected {count}: {names}",
         "mode": "Mode:", "practice": "Practice", "exam": "Exam", "wrong_answer": "Wrong Answers",
-        "order": "Order:", "sequential": "Sequential", "random": "Random", "count": "Questions:", "start": "Start",
+        "order": "Question set:", "all": "All Sequential", "random": "Random Sample", "range": "Range", "count": "Questions:", "range_start": "From:", "range_end": "To:", "start": "Start",
         "clear_selected": "Clear Selected Banks", "font_size": "Font size", "language": "Language:",
         "welcome": "Choose one or more question banks to begin.", "question": "Question", "status": "Status",
         "question_position": "Question {current} / {total}", "previous": "Previous", "next": "Next", "submit": "Submit",
@@ -41,6 +42,7 @@ TEXT = {
         "choose_bank_first": "Choose at least one question bank first.", "bank_error": "Question Bank Error", "wrong_error": "Wrong Answer Error",
         "wrong_unavailable": "The wrong-answer record could not be loaded.", "count_error": "Question Count Error", "no_wrong_title": "No Wrong Answers",
         "invalid_count": "Question count must be between 1 and {maximum}.",
+        "invalid_range": "Range must satisfy 1 ≤ start ≤ end ≤ {maximum}.",
         "no_wrong": "The selected banks have no recorded wrong answers.", "submit_confirm": "Submit and grade this exam?",
         "exam_result": "Exam Result", "score": "Score: {score} / {total}", "clear_title": "Clear Wrong Answers",
         "clear_confirm": "Clear all wrong answers for the selected banks?", "clear_done": "Wrong answers for the selected banks were cleared.",
@@ -60,6 +62,23 @@ def wheel_zoom_change(delta: int) -> int:
 
 def questions_from_banks(banks: list[QuestionBank]) -> list[Question]:
     return [question for bank in banks for section in bank.sections for question in section.questions]
+
+
+def select_questions(
+    questions: list[Question], method: str, *, count: int | None = None,
+    start: int | None = None, end: int | None = None,
+) -> list[Question]:
+    if method == "all":
+        return list(questions)
+    if method == "random":
+        if count is None or not 1 <= count <= len(questions):
+            raise ValueError("invalid count")
+        return random.sample(questions, count)
+    if method == "range":
+        if start is None or end is None or not 1 <= start <= end <= len(questions):
+            raise ValueError("invalid range")
+        return list(questions[start - 1:end])
+    raise ValueError("unknown selection method")
 
 
 def wrong_questions_from_banks(banks: list[QuestionBank], store: WrongAnswerStore) -> list[Question]:
@@ -164,7 +183,7 @@ class App:
         self.root = root
         self.language = "zh-Hant"
         self.mode_code = "practice"
-        self.order_code = "sequential"
+        self.order_code = "all"
         root.title("Ultimate Examer")
         root.geometry("1050x700")
         self.paths: tuple[str, ...] = ()
@@ -202,6 +221,8 @@ class App:
 
     def build_controls(self):
         previous_count = self.question_count.get() if hasattr(self, "question_count") and self.question_count.winfo_exists() else "10"
+        previous_start = self.range_start.get() if hasattr(self, "range_start") and self.range_start.winfo_exists() else "1"
+        previous_end = self.range_end.get() if hasattr(self, "range_end") and self.range_end.winfo_exists() else "20"
         for child in self.controls.winfo_children():
             child.destroy()
         setup = ttk.Frame(self.controls)
@@ -217,15 +238,24 @@ class App:
         self.mode.pack(side="left")
         self.mode.bind("<<ComboboxSelected>>", self.mode_changed)
         ttk.Label(setup, text=self.t("order")).pack(side="left", padx=(10, 0))
-        order_codes = ("sequential", "random")
+        order_codes = ("all", "random", "range")
         self.order = ttk.Combobox(setup, values=tuple(self.t(code) for code in order_codes), state="readonly", width=11)
         self.order.current(order_codes.index(self.order_code))
         self.order.pack(side="left")
-        self.order.bind("<<ComboboxSelected>>", lambda event: setattr(self, "order_code", order_codes[self.order.current()]))
+        self.order.bind("<<ComboboxSelected>>", self.order_changed)
         ttk.Label(setup, text=self.t("count")).pack(side="left", padx=(10, 0))
-        self.question_count = ttk.Spinbox(setup, from_=1, to=9999, width=5, state="normal" if self.mode_code == "exam" else "disabled")
+        self.question_count = ttk.Spinbox(setup, from_=1, to=9999, width=5)
         self.question_count.set(previous_count)
         self.question_count.pack(side="left")
+        ttk.Label(setup, text=self.t("range_start")).pack(side="left", padx=(10, 0))
+        self.range_start = ttk.Spinbox(setup, from_=1, to=9999, width=5)
+        self.range_start.set(previous_start)
+        self.range_start.pack(side="left")
+        ttk.Label(setup, text=self.t("range_end")).pack(side="left", padx=(6, 0))
+        self.range_end = ttk.Spinbox(setup, from_=1, to=9999, width=5)
+        self.range_end.set(previous_end)
+        self.range_end.pack(side="left")
+        self.update_selection_state()
         ttk.Button(setup, text=self.t("start"), command=self.start).pack(side="left", padx=(10, 0))
         ttk.Button(setup, text=self.t("clear_selected"), command=self.clear_selected_wrong_answers).pack(side="left", padx=(10, 0))
         zoom = ttk.Frame(self.controls)
@@ -243,7 +273,16 @@ class App:
 
     def mode_changed(self, _event=None):
         self.mode_code = ("practice", "exam", "wrong_answer")[self.mode.current()]
-        self.update_count_state()
+
+    def order_changed(self, _event=None):
+        self.order_code = ("all", "random", "range")[self.order.current()]
+        self.update_selection_state()
+
+    def update_selection_state(self):
+        self.question_count.configure(state="normal" if self.order_code == "random" else "disabled")
+        range_state = "normal" if self.order_code == "range" else "disabled"
+        self.range_start.configure(state=range_state)
+        self.range_end.configure(state=range_state)
 
     def language_changed(self, _event=None):
         self.language = ("zh-Hant", "en")[self.language_box.current()]
@@ -288,9 +327,6 @@ class App:
             self.paths = paths
             self.bank_label.configure(text=self.t("selected_banks", count=len(paths), names=", ".join(Path(path).name for path in paths)))
 
-    def update_count_state(self, _event=None):
-        self.question_count.configure(state="normal" if self.mode_code == "exam" else "disabled")
-
     def start(self):
         if not self.paths:
             messagebox.showwarning(self.t("no_bank_title"), self.t("choose_bank_first"))
@@ -315,16 +351,7 @@ class App:
                     )
             except OSError as error:
                 messagebox.showerror(self.t("wrong_error"), str(error))
-        if self.mode_code == "exam":
-            try:
-                count = int(self.question_count.get())
-                if not 1 <= count <= len(questions):
-                    raise ValueError
-                self.session = ExamSession(questions, count, self.order_code == "random")
-            except ValueError:
-                messagebox.showerror(self.t("count_error"), self.t("invalid_count", maximum=len(questions)))
-                return
-        elif self.mode_code == "wrong_answer":
+        if self.mode_code == "wrong_answer":
             if self.wrong_answers is None:
                 messagebox.showerror(self.t("wrong_error"), self.t("wrong_unavailable"))
                 return
@@ -332,9 +359,23 @@ class App:
             if not questions:
                 messagebox.showinfo(self.t("no_wrong_title"), self.t("no_wrong"))
                 return
-            self.session = PracticeSession(questions, self.order_code == "random")
+        try:
+            if self.order_code == "random":
+                questions = select_questions(questions, "random", count=int(self.question_count.get()))
+            elif self.order_code == "range":
+                questions = select_questions(
+                    questions, "range", start=int(self.range_start.get()), end=int(self.range_end.get())
+                )
+            else:
+                questions = select_questions(questions, "all")
+        except ValueError as error:
+            key = "invalid_range" if self.order_code == "range" else "invalid_count"
+            messagebox.showerror(self.t("count_error"), self.t(key, maximum=len(questions)))
+            return
+        if self.mode_code == "exam":
+            self.session = ExamSession(questions, len(questions))
         else:
-            self.session = PracticeSession(questions, self.order_code == "random")
+            self.session = PracticeSession(questions)
         self.build_session_ui()
         self.show_question()
 

@@ -7,7 +7,7 @@ import unittest
 from question_bank import load_question_bank, load_question_banks
 
 
-ISO17025_BANK = Path(__file__).parent / "Bank" / "ISO17025_question_bank.json"
+ISO17025_BANK = Path(__file__).parents[1] / "Bank" / "ISO17025_question_bank.json"
 
 
 def valid_bank(bank_id="sample-bank"):

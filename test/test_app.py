@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from app import (
     App, ExamSession, MAX_FONT_SIZE, MIN_FONT_SIZE, PracticeSession, TEXT, ZOOM_BINDINGS,
-    adjusted_font_size, questions_from_banks, update_wrong_record, wheel_zoom_change,
+    adjusted_font_size, questions_from_banks, select_questions, update_wrong_record, wheel_zoom_change,
     wrong_questions_from_banks,
 )
 from question_bank import Option, Question, QuestionBank, Section, load_question_bank
@@ -32,6 +32,30 @@ def bank(bank_id, *question_ids):
 
 
 class PracticeSessionTests(unittest.TestCase):
+    def test_all_selection_preserves_pool_order(self):
+        items = [question("q1"), question("q2"), question("q3")]
+        self.assertEqual(["q1", "q2", "q3"], [item.id for item in select_questions(items, "all")])
+
+    def test_random_selection_uses_requested_count_without_duplicates(self):
+        items = [question("q1"), question("q2"), question("q3")]
+        with patch("app.random.sample", return_value=[items[2], items[0]]) as sample:
+            selected = select_questions(items, "random", count=2)
+        sample.assert_called_once_with(items, 2)
+        self.assertEqual(["q3", "q1"], [item.id for item in selected])
+
+    def test_range_selection_is_one_based_inclusive_and_ignores_number(self):
+        items = [question("q1"), question("q2"), question("q3"), question("q4")]
+        self.assertEqual(["q2", "q3"], [item.id for item in select_questions(items, "range", start=2, end=3)])
+
+    def test_invalid_selection_parameters(self):
+        items = [question("q1"), question("q2"), question("q3")]
+        for kwargs in ({"count": 0}, {"count": 4}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(ValueError, "invalid count"):
+                select_questions(items, "random", **kwargs)
+        for start, end in ((0, 2), (1, 4), (3, 2)):
+            with self.subTest(start=start, end=end), self.assertRaisesRegex(ValueError, "invalid range"):
+                select_questions(items, "range", start=start, end=end)
+
     def test_sequential_preserves_original_order(self):
         session = PracticeSession([question("q1"), question("q2"), question("q3")])
         self.assertEqual(["q1", "q2", "q3"], [item.id for item in session.questions])
@@ -197,7 +221,7 @@ class TranslationTests(unittest.TestCase):
 
 class RealBankFlowTests(unittest.TestCase):
     def test_all_modes_with_iso17025_bank(self):
-        loaded = load_question_bank(Path(__file__).parent / "Bank" / "ISO17025_question_bank.json")
+        loaded = load_question_bank(Path(__file__).parents[1] / "Bank" / "ISO17025_question_bank.json")
         pool = questions_from_banks([loaded])
         self.assertEqual(113, len(pool))
 

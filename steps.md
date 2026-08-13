@@ -45,8 +45,11 @@
 
 每次開始 session 時可選擇：
 
-* Sequential：依題庫選取順序及 JSON 中 section／question array 順序出題。
-* Random：將所有選中題庫共同形成的題目 pool 隨機排序，同一 session 不重複。
+* 全部依序：依題庫選取順序及 JSON 中 section／question array 順序出全部題目。
+* 隨機抽題：指定題數，從目前題目池無重複隨機抽取。
+* 指定範圍：指定載入後題目池的 1-based 起訖位置，依原始順序出題；不使用 `question.number`。
+
+三種模式在適用時共用這套出題方式，並驗證題數與範圍邊界。
 
 Practice Mode 支援 Previous、Next 與題目清單／Jump to Question。未作答即可導航；返回已作答題目時保留 selected answer、正確答案及正確／錯誤結果。題目清單顯示順序編號、題目文字摘要與 unanswered／correct／incorrect。第一題與最後一題的無效方向按鈕應 disabled。
 
@@ -60,7 +63,7 @@ Practice Mode 支援 Previous、Next 與題目清單／Jump to Question。未作
 
 考試過程中不透露答案。
 
-Exam Mode 使用與 Practice Mode 相同的 Sequential／Random 定義，並可在未作答時 Previous、Next 或 Jump。交卷前題目清單只顯示 answered／unanswered，不得顯示正確答案或正確／錯誤狀態。
+Exam Mode 使用與 Practice Mode 相同的出題方式，並可在未作答時 Previous、Next 或 Jump。交卷前題目清單只顯示 answered／unanswered，不得顯示正確答案或正確／錯誤狀態。
 
 完成整場後：
 
@@ -88,7 +91,7 @@ Exam Mode 使用與 Practice Mode 相同的 Sequential／Random 定義，並可�
 
 錯題紀錄應能跨程式啟動保留。
 
-Wrong Answer Mode 從目前錯題 pool 建立 session，使用相同的 Sequential／Random 選擇，導航與狀態保留行為同 Practice Mode。
+Wrong Answer Mode 從目前錯題 pool 建立 session，使用相同的出題方式，導航與狀態保留行為同 Practice Mode。
 
 實際儲存格式由實作決定，但保持簡單且可靠。
 
