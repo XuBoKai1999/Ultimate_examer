@@ -2,9 +2,9 @@ import unittest
 from unittest.mock import patch
 
 from app import (
-    App, ExamSession, MAX_FONT_SIZE, MIN_FONT_SIZE, PracticeSession, TEXT, ZOOM_BINDINGS,
+    App, ExamSession, MAX_FONT_SIZE, MIN_FONT_SIZE, PracticeSession, RADIO_TRISTATE_VALUE, TEXT, ZOOM_BINDINGS,
     adjusted_font_size, questions_from_banks, select_questions, update_wrong_record, wheel_zoom_change,
-    wrong_questions_from_banks,
+    wrong_questions_from_banks, tree_layout,
 )
 from question_bank import Option, Question, QuestionBank, Section, load_question_bank
 from wrong_answers import WrongAnswerStore
@@ -91,6 +91,17 @@ class PracticeSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "already answered"):
             session.answer("b")
 
+    def test_radio_selection_tracks_each_question_answer(self):
+        session = PracticeSession([question("q1"), question("q2")])
+        self.assertEqual("", session.answers.get(session.index, ""))
+        session.answer("a")
+        self.assertEqual("a", session.answers.get(session.index, ""))
+        session.next()
+        self.assertEqual("", session.answers.get(session.index, ""))
+        session.previous()
+        self.assertEqual("a", session.answers.get(session.index, ""))
+        self.assertNotEqual("", RADIO_TRISTATE_VALUE)
+
     def test_navigation_boundaries(self):
         session = PracticeSession([question("q1"), question("q2")])
         self.assertFalse(session.can_previous)
@@ -127,6 +138,13 @@ class PracticeSessionTests(unittest.TestCase):
         self.assertEqual(-1, ZOOM_BINDINGS["<Control-minus>"])
         self.assertEqual((1, -1, 0), (wheel_zoom_change(120), wheel_zoom_change(-120), wheel_zoom_change(0)))
 
+    def test_tree_layout_tracks_font_metrics_and_shrinks_back(self):
+        small = tree_layout(linespace=16, question_width=250, status_width=70)
+        large = tree_layout(linespace=34, question_width=440, status_width=140)
+        self.assertEqual((24, 260, 98), small)
+        self.assertEqual((42, 440, 168), large)
+        self.assertGreater(large[0], small[0])
+
 
 class ExamSessionTests(unittest.TestCase):
     def test_question_count_and_sequential_order(self):
@@ -158,6 +176,14 @@ class ExamSessionTests(unittest.TestCase):
         self.assertTrue(session.jump(2))
         self.assertTrue(session.previous())
         self.assertEqual("q2", session.current.id)
+
+    def test_selection_survives_exam_navigation(self):
+        session = ExamSession([question("q1"), question("q2")], 2)
+        session.answer("a")
+        session.next()
+        self.assertEqual("", session.answers.get(session.index, ""))
+        session.previous()
+        self.assertEqual("a", session.answers.get(session.index, ""))
 
     def test_submit_scores_and_exposes_results(self):
         session = ExamSession([question("q1"), question("q2"), question("q3")], 3)

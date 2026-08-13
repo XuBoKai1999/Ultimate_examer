@@ -50,6 +50,7 @@ TEXT = {
 }
 LANGUAGE_NAMES = ("繁體中文", "English")
 ZOOM_BINDINGS = {"<Control-plus>": 1, "<Control-equal>": 1, "<Control-minus>": -1}
+RADIO_TRISTATE_VALUE = "__tristate__"
 
 
 def adjusted_font_size(current: int, change: int) -> int:
@@ -58,6 +59,10 @@ def adjusted_font_size(current: int, change: int) -> int:
 
 def wheel_zoom_change(delta: int) -> int:
     return 1 if delta > 0 else -1 if delta < 0 else 0
+
+
+def tree_layout(linespace: int, question_width: int, status_width: int) -> tuple[int, int, int]:
+    return max(24, linespace + 8), min(480, max(260, question_width)), max(90, status_width + 28)
 
 
 def questions_from_banks(banks: list[QuestionBank]) -> list[Question]:
@@ -225,12 +230,15 @@ class App:
         previous_end = self.range_end.get() if hasattr(self, "range_end") and self.range_end.winfo_exists() else "20"
         for child in self.controls.winfo_children():
             child.destroy()
-        setup = ttk.Frame(self.controls)
-        setup.pack(fill="x")
-        ttk.Button(setup, text=self.t("choose_banks"), command=self.choose_banks).pack(side="left")
+        bank_row = ttk.Frame(self.controls)
+        bank_row.pack(fill="x")
+        ttk.Button(bank_row, text=self.t("choose_banks"), command=self.choose_banks).pack(side="left")
         bank_text = self.t("selected_banks", count=len(self.paths), names=", ".join(Path(path).name for path in self.paths)) if self.paths else self.t("no_banks_selected")
-        self.bank_label = ttk.Label(setup, text=bank_text)
+        self.bank_label = ttk.Label(bank_row, text=bank_text)
         self.bank_label.pack(side="left", padx=10, fill="x", expand=True)
+        ttk.Button(bank_row, text=self.t("clear_selected"), command=self.clear_selected_wrong_answers).pack(side="right")
+        setup = ttk.Frame(self.controls)
+        setup.pack(fill="x", pady=(8, 0))
         ttk.Label(setup, text=self.t("mode")).pack(side="left")
         mode_codes = ("practice", "exam", "wrong_answer")
         self.mode = ttk.Combobox(setup, values=tuple(self.t(code) for code in mode_codes), state="readonly", width=13)
@@ -243,21 +251,22 @@ class App:
         self.order.current(order_codes.index(self.order_code))
         self.order.pack(side="left")
         self.order.bind("<<ComboboxSelected>>", self.order_changed)
-        ttk.Label(setup, text=self.t("count")).pack(side="left", padx=(10, 0))
-        self.question_count = ttk.Spinbox(setup, from_=1, to=9999, width=5)
+        parameters = ttk.Frame(self.controls)
+        parameters.pack(fill="x", pady=(8, 0))
+        ttk.Label(parameters, text=self.t("count")).pack(side="left")
+        self.question_count = ttk.Spinbox(parameters, from_=1, to=9999, width=5)
         self.question_count.set(previous_count)
         self.question_count.pack(side="left")
-        ttk.Label(setup, text=self.t("range_start")).pack(side="left", padx=(10, 0))
-        self.range_start = ttk.Spinbox(setup, from_=1, to=9999, width=5)
+        ttk.Label(parameters, text=self.t("range_start")).pack(side="left", padx=(10, 0))
+        self.range_start = ttk.Spinbox(parameters, from_=1, to=9999, width=5)
         self.range_start.set(previous_start)
         self.range_start.pack(side="left")
-        ttk.Label(setup, text=self.t("range_end")).pack(side="left", padx=(6, 0))
-        self.range_end = ttk.Spinbox(setup, from_=1, to=9999, width=5)
+        ttk.Label(parameters, text=self.t("range_end")).pack(side="left", padx=(6, 0))
+        self.range_end = ttk.Spinbox(parameters, from_=1, to=9999, width=5)
         self.range_end.set(previous_end)
         self.range_end.pack(side="left")
         self.update_selection_state()
-        ttk.Button(setup, text=self.t("start"), command=self.start).pack(side="left", padx=(10, 0))
-        ttk.Button(setup, text=self.t("clear_selected"), command=self.clear_selected_wrong_answers).pack(side="left", padx=(10, 0))
+        ttk.Button(parameters, text=self.t("start"), command=self.start).pack(side="left", padx=(10, 0))
         zoom = ttk.Frame(self.controls)
         zoom.pack(fill="x", pady=(12, 0))
         ttk.Label(zoom, text=self.t("font_size")).pack(side="left")
@@ -300,8 +309,16 @@ class App:
 
     def _apply_font(self):
         self.root.option_add("*Font", self.app_font)
-        for widget in ("TLabel", "TButton", "TRadiobutton", "TCombobox", "Treeview"):
+        for widget in ("TLabel", "TButton", "TRadiobutton", "TCombobox", "TSpinbox", "Treeview", "Treeview.Heading"):
             self.style.configure(widget, font=self.app_font)
+        rowheight, question_width, status_width = tree_layout(
+            self.app_font.metrics("linespace"), self.app_font.measure("M" * 24),
+            max(self.app_font.measure(self.t(status)) for status in ("unanswered", "answered", "incorrect")),
+        )
+        self.style.configure("Treeview", rowheight=rowheight)
+        if hasattr(self, "question_list") and self.question_list.winfo_exists():
+            self.question_list.column("#0", width=question_width)
+            self.question_list.column("status", width=status_width)
 
     def zoom(self, change: int):
         size = adjusted_font_size(self.font_size, change)
@@ -387,8 +404,13 @@ class App:
         self.question_list = ttk.Treeview(list_frame, columns=("status",), show="tree headings", selectmode="browse")
         self.question_list.heading("#0", text=self.t("question"))
         self.question_list.heading("status", text=self.t("status"))
-        self.question_list.column("#0", width=330)
-        self.question_list.column("status", width=90, anchor="center")
+        rowheight, question_width, status_width = tree_layout(
+            self.app_font.metrics("linespace"), self.app_font.measure("M" * 24),
+            max(self.app_font.measure(self.t(status)) for status in ("unanswered", "answered", "incorrect")),
+        )
+        self.style.configure("Treeview", rowheight=rowheight)
+        self.question_list.column("#0", width=question_width)
+        self.question_list.column("status", width=status_width, anchor="center")
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.question_list.yview)
         self.question_list.configure(yscrollcommand=scrollbar.set)
         self.question_list.pack(side="left", fill="y")
@@ -397,8 +419,19 @@ class App:
         for index, question in enumerate(self.session.questions):
             snippet = question.text.replace("\n", " ")[:38]
             self.question_list.insert("", "end", iid=str(index), text=f"{index + 1}. {snippet}", values=(self.t(self.session.status(index)),))
-        self.question_area = ttk.Frame(self.content)
-        self.question_area.pack(side="left", fill="both", expand=True)
+        question_frame = ttk.Frame(self.content)
+        question_frame.pack(side="left", fill="both", expand=True)
+        self.question_canvas = tk.Canvas(question_frame, highlightthickness=0)
+        question_scrollbar = ttk.Scrollbar(question_frame, orient="vertical", command=self.question_canvas.yview)
+        self.question_canvas.configure(yscrollcommand=question_scrollbar.set)
+        self.question_canvas.pack(side="left", fill="both", expand=True)
+        question_scrollbar.pack(side="right", fill="y")
+        self.question_area = ttk.Frame(self.question_canvas, padding=(8, 0, 8, 8))
+        self.question_window = self.question_canvas.create_window((0, 0), window=self.question_area, anchor="nw")
+        self.question_area.bind(
+            "<Configure>", lambda event: self.question_canvas.configure(scrollregion=self.question_canvas.bbox("all"))
+        )
+        self.question_canvas.bind("<Configure>", self._resize_question_area)
 
     def show_question(self):
         for child in self.question_area.winfo_children():
@@ -410,7 +443,8 @@ class App:
         self.question_list.see(str(self.session.index))
 
         ttk.Label(self.question_area, text=self.t("question_position", current=self.session.index + 1, total=len(self.session.questions))).pack(anchor="w")
-        ttk.Label(self.question_area, text=question.text, wraplength=640, justify="left").pack(
+        self.question_label = ttk.Label(self.question_area, text=question.text, justify="left")
+        self.question_label.pack(
             anchor="w", fill="x", pady=(12, 16)
         )
         exam = isinstance(self.session, ExamSession)
@@ -418,13 +452,18 @@ class App:
         locked = answered and not exam or exam and self.session.submitted
         self.option_buttons = []
         for option in question.options:
-            button = ttk.Radiobutton(
+            button = tk.Radiobutton(
                 self.question_area,
                 text=f"{option.id}. {option.text}",
                 value=option.id,
                 variable=self.answer_var,
+                tristatevalue=RADIO_TRISTATE_VALUE,
                 command=self.select_answer,
                 state="disabled" if locked else "normal",
+                font=self.app_font,
+                anchor="w",
+                justify="left",
+                borderwidth=0,
             )
             button.pack(anchor="w", fill="x", pady=4)
             self.option_buttons.append(button)
@@ -446,6 +485,20 @@ class App:
 
         if exam and not self.session.submitted:
             ttk.Button(navigation, text=self.t("submit"), command=self.submit_exam).pack(side="right", padx=10)
+        self._resize_question_area()
+
+    def _resize_question_area(self, event=None):
+        if not hasattr(self, "question_canvas") or not self.question_canvas.winfo_exists():
+            return
+        width = event.width if event else self.question_canvas.winfo_width()
+        self.question_canvas.itemconfigure(self.question_window, width=max(width, 1))
+        wraplength = max(120, width - 32)
+        if hasattr(self, "question_label"):
+            self.question_label.configure(wraplength=wraplength)
+        for button in getattr(self, "option_buttons", ()):
+            button.configure(wraplength=wraplength)
+        if hasattr(self, "result"):
+            self.result.configure(wraplength=wraplength)
 
     def select_answer(self):
         selected = self.answer_var.get()
