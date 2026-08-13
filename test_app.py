@@ -2,10 +2,11 @@ import unittest
 from unittest.mock import patch
 
 from app import (
-    ExamSession, MAX_FONT_SIZE, MIN_FONT_SIZE, PracticeSession, adjusted_font_size,
-    questions_from_banks, update_wrong_record, wrong_questions_from_banks,
+    App, ExamSession, MAX_FONT_SIZE, MIN_FONT_SIZE, PracticeSession, TEXT, ZOOM_BINDINGS,
+    adjusted_font_size, questions_from_banks, update_wrong_record, wheel_zoom_change,
+    wrong_questions_from_banks,
 )
-from question_bank import Option, Question, QuestionBank, Section
+from question_bank import Option, Question, QuestionBank, Section, load_question_bank
 from wrong_answers import WrongAnswerStore
 from pathlib import Path
 import tempfile
@@ -96,6 +97,12 @@ class PracticeSessionTests(unittest.TestCase):
         self.assertEqual(MAX_FONT_SIZE, adjusted_font_size(MAX_FONT_SIZE, 1))
         self.assertEqual(15, adjusted_font_size(14, 1))
 
+    def test_zoom_shortcuts_and_mouse_wheel(self):
+        self.assertEqual(1, ZOOM_BINDINGS["<Control-plus>"])
+        self.assertEqual(1, ZOOM_BINDINGS["<Control-equal>"])
+        self.assertEqual(-1, ZOOM_BINDINGS["<Control-minus>"])
+        self.assertEqual((1, -1, 0), (wheel_zoom_change(120), wheel_zoom_change(-120), wheel_zoom_change(0)))
+
 
 class ExamSessionTests(unittest.TestCase):
     def test_question_count_and_sequential_order(self):
@@ -169,6 +176,44 @@ class WrongAnswerModeTests(unittest.TestCase):
             with patch("app.random.shuffle", side_effect=lambda values: values.reverse()):
                 session = PracticeSession(pool, random_order=True)
             self.assertEqual(["q2", "q1"], [item.id for item in session.questions])
+
+
+class TranslationTests(unittest.TestCase):
+    def test_languages_define_the_same_keys(self):
+        self.assertEqual(set(TEXT["zh-Hant"]), set(TEXT["en"]))
+
+    def test_translation_and_formatting(self):
+        app = App.__new__(App)
+        app.language = "zh-Hant"
+        self.assertEqual("題目 2 / 10", app.t("question_position", current=2, total=10))
+        app.language = "en"
+        self.assertEqual("Question 2 / 10", app.t("question_position", current=2, total=10))
+
+    def test_session_status_codes_remain_language_independent(self):
+        session = PracticeSession([question()])
+        session.answer("b")
+        self.assertEqual("correct", session.status(0))
+
+
+class RealBankFlowTests(unittest.TestCase):
+    def test_all_modes_with_iso17025_bank(self):
+        loaded = load_question_bank(Path(__file__).parent / "Bank" / "ISO17025_question_bank.json")
+        pool = questions_from_banks([loaded])
+        self.assertEqual(113, len(pool))
+
+        practice = PracticeSession(pool)
+        practice.answer(practice.current.answer)
+        self.assertEqual("correct", practice.status(0))
+
+        exam = ExamSession(pool, 10)
+        exam.answer(next(option.id for option in exam.current.options if option.id != exam.current.answer))
+        self.assertEqual((0, 10), exam.submit())
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = WrongAnswerStore(Path(directory) / "wrong.json")
+            store.add(loaded.id, exam.wrong_questions[0].id)
+            wrong_pool = wrong_questions_from_banks([loaded], store)
+            self.assertEqual([exam.wrong_questions[0].id], [item.id for item in wrong_pool])
 
 
 if __name__ == "__main__":
