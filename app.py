@@ -1,0 +1,408 @@
+"""Ultimate_examer GUI: Practice and Exam modes."""
+
+from pathlib import Path
+import random
+import tkinter as tk
+from tkinter import filedialog, font, messagebox, ttk
+
+from question_bank import Question, QuestionBank, load_question_banks
+from wrong_answers import WrongAnswerStore
+
+
+MIN_FONT_SIZE = 10
+MAX_FONT_SIZE = 28
+
+
+def adjusted_font_size(current: int, change: int) -> int:
+    return max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, current + change))
+
+
+def questions_from_banks(banks: list[QuestionBank]) -> list[Question]:
+    return [question for bank in banks for section in bank.sections for question in section.questions]
+
+
+def wrong_questions_from_banks(banks: list[QuestionBank], store: WrongAnswerStore) -> list[Question]:
+    return [
+        question for bank in banks for section in bank.sections for question in section.questions
+        if store.contains(bank.id, question.id)
+    ]
+
+
+def update_wrong_record(
+    store: WrongAnswerStore, bank_id: str, question_id: str, status: str, remove_if_correct: bool = False
+) -> None:
+    if status == "incorrect":
+        store.add(bank_id, question_id)
+    elif status == "correct" and remove_if_correct:
+        store.remove(bank_id, question_id)
+
+
+class PracticeSession:
+    def __init__(self, questions: list[Question], random_order: bool = False):
+        if not questions:
+            raise ValueError("Practice session requires at least one question")
+        self.questions = list(questions)
+        if random_order:
+            random.shuffle(self.questions)
+        self.index = 0
+        self.answers: dict[int, str] = {}
+
+    @property
+    def current(self) -> Question:
+        return self.questions[self.index]
+
+    @property
+    def can_previous(self) -> bool:
+        return self.index > 0
+
+    @property
+    def can_next(self) -> bool:
+        return self.index + 1 < len(self.questions)
+
+    def answer(self, option_id: str) -> bool:
+        if self.index in self.answers:
+            raise ValueError("Question already answered")
+        if option_id not in {option.id for option in self.current.options}:
+            raise ValueError("Unknown option")
+        self.answers[self.index] = option_id
+        return option_id == self.current.answer
+
+    def status(self, index: int) -> str:
+        if index not in self.answers:
+            return "unanswered"
+        return "correct" if self.answers[index] == self.questions[index].answer else "incorrect"
+
+    def jump(self, index: int) -> bool:
+        if not 0 <= index < len(self.questions):
+            return False
+        self.index = index
+        return True
+
+    def previous(self) -> bool:
+        return self.jump(self.index - 1) if self.can_previous else False
+
+    def next(self) -> bool:
+        return self.jump(self.index + 1) if self.can_next else False
+
+
+class ExamSession(PracticeSession):
+    def __init__(self, questions: list[Question], count: int, random_order: bool = False):
+        if not 1 <= count <= len(questions):
+            raise ValueError(f"Question count must be between 1 and {len(questions)}")
+        super().__init__(questions, random_order)
+        self.questions = self.questions[:count]
+        self.submitted = False
+
+    def answer(self, option_id: str) -> None:
+        if self.submitted:
+            raise ValueError("Exam already submitted")
+        if option_id not in {option.id for option in self.current.options}:
+            raise ValueError("Unknown option")
+        self.answers[self.index] = option_id
+
+    def status(self, index: int) -> str:
+        if index not in self.answers:
+            return "unanswered"
+        if not self.submitted:
+            return "answered"
+        return "correct" if self.answers[index] == self.questions[index].answer else "incorrect"
+
+    def submit(self) -> tuple[int, int]:
+        self.submitted = True
+        return sum(self.status(index) == "correct" for index in range(len(self.questions))), len(self.questions)
+
+    @property
+    def wrong_questions(self) -> list[Question]:
+        if not self.submitted:
+            return []
+        return [question for index, question in enumerate(self.questions) if self.status(index) == "incorrect"]
+
+
+class App:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        root.title("Ultimate Examer")
+        root.geometry("1050x700")
+        self.paths: tuple[str, ...] = ()
+        self.session: PracticeSession | ExamSession | None = None
+        self.loaded_banks: list[QuestionBank] = []
+        self.question_keys: dict[int, tuple[str, str]] = {}
+        try:
+            self.wrong_answers = WrongAnswerStore(Path(__file__).with_name("wrong_answers.json"))
+        except ValueError as error:
+            self.wrong_answers = None
+            messagebox.showerror("錯題紀錄錯誤", str(error))
+        self.answer_var = tk.StringVar()
+        self.font_size = 14
+        self.app_font = font.Font(family="TkDefaultFont", size=self.font_size)
+        self.style = ttk.Style()
+        self._apply_font()
+
+        self.main = ttk.Frame(root, padding=16)
+        self.main.pack(fill="both", expand=True)
+        setup = ttk.Frame(self.main)
+        setup.pack(fill="x")
+        ttk.Button(setup, text="選擇題庫", command=self.choose_banks).pack(side="left")
+        self.bank_label = ttk.Label(setup, text="尚未選擇題庫")
+        self.bank_label.pack(side="left", padx=10, fill="x", expand=True)
+        ttk.Label(setup, text="模式：").pack(side="left")
+        self.mode = ttk.Combobox(setup, values=("Practice", "Exam", "Wrong Answer"), state="readonly", width=13)
+        self.mode.current(0)
+        self.mode.pack(side="left")
+        self.mode.bind("<<ComboboxSelected>>", self.update_count_state)
+        ttk.Label(setup, text="順序：").pack(side="left", padx=(10, 0))
+        self.order = ttk.Combobox(setup, values=("Sequential", "Random"), state="readonly", width=11)
+        self.order.current(0)
+        self.order.pack(side="left")
+        ttk.Label(setup, text="題數：").pack(side="left", padx=(10, 0))
+        self.question_count = ttk.Spinbox(setup, from_=1, to=9999, width=5, state="disabled")
+        self.question_count.set("10")
+        self.question_count.pack(side="left")
+        ttk.Button(setup, text="開始", command=self.start).pack(side="left", padx=(10, 0))
+        ttk.Button(setup, text="清除所選題庫錯題", command=self.clear_selected_wrong_answers).pack(side="left", padx=(10, 0))
+
+        zoom = ttk.Frame(self.main)
+        zoom.pack(fill="x", pady=(12, 0))
+        ttk.Label(zoom, text="字體大小").pack(side="left")
+        ttk.Button(zoom, text="−", width=3, command=lambda: self.zoom(-1)).pack(side="left", padx=4)
+        ttk.Button(zoom, text="+", width=3, command=lambda: self.zoom(1)).pack(side="left")
+        self.size_label = ttk.Label(zoom, text=str(self.font_size))
+        self.size_label.pack(side="left", padx=6)
+
+        ttk.Separator(self.main).pack(fill="x", pady=12)
+        self.content = ttk.Frame(self.main)
+        self.content.pack(fill="both", expand=True)
+        ttk.Label(self.content, text="選擇一個或多個題庫後開始練習。").pack(pady=80)
+
+        root.bind("<Control-plus>", lambda event: self.zoom(1))
+        root.bind("<Control-equal>", lambda event: self.zoom(1))
+        root.bind("<Control-minus>", lambda event: self.zoom(-1))
+        root.bind("<Control-MouseWheel>", self._wheel_zoom)
+
+    def _apply_font(self):
+        self.root.option_add("*Font", self.app_font)
+        for widget in ("TLabel", "TButton", "TRadiobutton", "TCombobox", "Treeview"):
+            self.style.configure(widget, font=self.app_font)
+
+    def zoom(self, change: int):
+        size = adjusted_font_size(self.font_size, change)
+        if size != self.font_size:
+            self.font_size = size
+            self.app_font.configure(size=size)
+            self._apply_font()
+            self.size_label.configure(text=str(size))
+
+    def _wheel_zoom(self, event):
+        if event.delta:
+            self.zoom(1 if event.delta > 0 else -1)
+        return "break"
+
+    def choose_banks(self):
+        paths = filedialog.askopenfilenames(
+            title="選擇題庫",
+            initialdir=Path(__file__).parent / "Bank",
+            filetypes=(("JSON 題庫", "*.json"),),
+        )
+        if paths:
+            self.paths = paths
+            self.bank_label.configure(text=f"已選擇 {len(paths)} 個：{', '.join(Path(path).name for path in paths)}")
+
+    def update_count_state(self, _event=None):
+        self.question_count.configure(state="normal" if self.mode.get() == "Exam" else "disabled")
+
+    def start(self):
+        if not self.paths:
+            messagebox.showwarning("無題庫", "請先選擇至少一個題庫。")
+            return
+        try:
+            banks = load_question_banks(self.paths)
+            questions = questions_from_banks(banks)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("題庫錯誤", str(error))
+            return
+        self.loaded_banks = banks
+        self.question_keys = {
+            id(question): (bank.id, question.id)
+            for bank in banks for section in bank.sections for question in section.questions
+        }
+        if self.wrong_answers is not None:
+            try:
+                for bank in banks:
+                    self.wrong_answers.prune(
+                        bank.id,
+                        {question.id for section in bank.sections for question in section.questions},
+                    )
+            except OSError as error:
+                messagebox.showerror("錯題紀錄錯誤", str(error))
+        if self.mode.get() == "Exam":
+            try:
+                count = int(self.question_count.get())
+                self.session = ExamSession(questions, count, self.order.get() == "Random")
+            except ValueError as error:
+                messagebox.showerror("題數錯誤", str(error))
+                return
+        elif self.mode.get() == "Wrong Answer":
+            if self.wrong_answers is None:
+                messagebox.showerror("錯題紀錄錯誤", "錯題紀錄無法載入。")
+                return
+            questions = wrong_questions_from_banks(banks, self.wrong_answers)
+            if not questions:
+                messagebox.showinfo("無錯題", "選取的題庫目前沒有錯題紀錄。")
+                return
+            self.session = PracticeSession(questions, self.order.get() == "Random")
+        else:
+            self.session = PracticeSession(questions, self.order.get() == "Random")
+        self.build_session_ui()
+        self.show_question()
+
+    def build_session_ui(self):
+        for child in self.content.winfo_children():
+            child.destroy()
+        self.question_list = ttk.Treeview(self.content, columns=("status",), show="tree headings", selectmode="browse")
+        self.question_list.heading("#0", text="題目")
+        self.question_list.heading("status", text="狀態")
+        self.question_list.column("#0", width=330)
+        self.question_list.column("status", width=90, anchor="center")
+        self.question_list.pack(side="left", fill="y", padx=(0, 16))
+        self.question_list.bind("<<TreeviewSelect>>", self.jump_to_selected)
+        for index, question in enumerate(self.session.questions):
+            snippet = question.text.replace("\n", " ")[:38]
+            self.question_list.insert("", "end", iid=str(index), text=f"{index + 1}. {snippet}", values=("unanswered",))
+        self.question_area = ttk.Frame(self.content)
+        self.question_area.pack(side="left", fill="both", expand=True)
+
+    def show_question(self):
+        for child in self.question_area.winfo_children():
+            child.destroy()
+        question = self.session.current
+        selected = self.session.answers.get(self.session.index, "")
+        self.answer_var.set(selected)
+        self.question_list.selection_set(str(self.session.index))
+        self.question_list.see(str(self.session.index))
+
+        ttk.Label(self.question_area, text=f"題目 {self.session.index + 1} / {len(self.session.questions)}").pack(anchor="w")
+        ttk.Label(self.question_area, text=question.text, wraplength=640, justify="left").pack(
+            anchor="w", fill="x", pady=(12, 16)
+        )
+        exam = isinstance(self.session, ExamSession)
+        answered = self.session.index in self.session.answers
+        locked = answered and not exam or exam and self.session.submitted
+        self.option_buttons = []
+        for option in question.options:
+            button = ttk.Radiobutton(
+                self.question_area,
+                text=f"{option.id}. {option.text}",
+                value=option.id,
+                variable=self.answer_var,
+                command=self.select_answer,
+                state="disabled" if locked else "normal",
+            )
+            button.pack(anchor="w", fill="x", pady=4)
+            self.option_buttons.append(button)
+        self.result = tk.Label(self.question_area, text="", anchor="w", justify="left", font=self.app_font)
+        self.result.pack(anchor="w", fill="x", pady=(18, 8))
+        if answered and not exam or exam and self.session.submitted:
+            self.show_result()
+
+        navigation = ttk.Frame(self.question_area)
+        navigation.pack(fill="x", side="bottom")
+        ttk.Button(
+            navigation, text="上一題", command=self.go_previous,
+            state="normal" if self.session.can_previous else "disabled",
+        ).pack(side="left")
+        ttk.Button(
+            navigation, text="下一題", command=self.go_next,
+            state="normal" if self.session.can_next else "disabled",
+        ).pack(side="right")
+
+        if exam and not self.session.submitted:
+            ttk.Button(navigation, text="交卷", command=self.submit_exam).pack(side="right", padx=10)
+
+    def select_answer(self):
+        selected = self.answer_var.get()
+        if not selected:
+            return
+        if isinstance(self.session, ExamSession):
+            self.session.answer(selected)
+            self.question_list.set(str(self.session.index), "status", "answered")
+            return
+        if self.session.index in self.session.answers:
+            return
+        self.session.answer(selected)
+        for button in self.option_buttons:
+            button.configure(state="disabled")
+        self.question_list.set(str(self.session.index), "status", self.session.status(self.session.index))
+        status = self.session.status(self.session.index)
+        self.update_wrong(self.session.current, status, self.mode.get() == "Wrong Answer")
+        self.show_result()
+
+    def submit_exam(self):
+        if not messagebox.askyesno("交卷", "確定要交卷並批改嗎？"):
+            return
+        score, total = self.session.submit()
+        for question in self.session.wrong_questions:
+            self.update_wrong(question, "incorrect")
+        for index in range(total):
+            self.question_list.set(str(index), "status", self.session.status(index))
+        self.show_question()
+        messagebox.showinfo("考試結果", f"得分：{score} / {total}")
+
+    def update_wrong(self, question: Question, status: str, remove_if_correct: bool = False):
+        if self.wrong_answers is None:
+            return
+        try:
+            update_wrong_record(self.wrong_answers, *self.question_keys[id(question)], status, remove_if_correct)
+        except OSError as error:
+            messagebox.showerror("錯題紀錄錯誤", str(error))
+
+    def clear_selected_wrong_answers(self):
+        if not self.paths:
+            messagebox.showwarning("無題庫", "請先選擇至少一個題庫。")
+            return
+        if self.wrong_answers is None:
+            messagebox.showerror("錯題紀錄錯誤", "錯題紀錄無法載入。")
+            return
+        try:
+            banks = load_question_banks(self.paths)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("題庫錯誤", str(error))
+            return
+        if not messagebox.askyesno("清除錯題", "確定清除目前所選題庫的所有錯題紀錄嗎？"):
+            return
+        try:
+            self.wrong_answers.clear_banks({bank.id for bank in banks})
+        except OSError as error:
+            messagebox.showerror("錯題紀錄錯誤", str(error))
+            return
+        messagebox.showinfo("清除錯題", "已清除目前所選題庫的錯題紀錄。")
+
+    def show_result(self):
+        question = self.session.current
+        status = self.session.status(self.session.index)
+        correct = status == "correct"
+        answer = next(option.text for option in question.options if option.id == question.answer)
+        label = {"correct": "正確", "incorrect": "錯誤", "unanswered": "未作答"}[status]
+        self.result.configure(
+            text=f"{label}；正確答案：{question.answer}. {answer}",
+            fg="#167a3e" if correct else "#b42318",
+        )
+
+    def go_previous(self):
+        if self.session.previous():
+            self.show_question()
+
+    def go_next(self):
+        if self.session.next():
+            self.show_question()
+
+    def jump_to_selected(self, _event=None):
+        selected = self.question_list.selection()
+        target = int(selected[0]) if selected else self.session.index
+        if target != self.session.index and self.session.jump(target):
+            self.show_question()
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    App(root)
+    root.mainloop()

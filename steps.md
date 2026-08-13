@@ -43,6 +43,13 @@
 
 同時完成基本字體縮放功能。
 
+每次開始 session 時可選擇：
+
+* Sequential：依題庫選取順序及 JSON 中 section／question array 順序出題。
+* Random：將所有選中題庫共同形成的題目 pool 隨機排序，同一 session 不重複。
+
+Practice Mode 支援 Previous、Next 與題目清單／Jump to Question。未作答即可導航；返回已作答題目時保留 selected answer、正確答案及正確／錯誤結果。題目清單顯示順序編號、題目文字摘要與 unanswered／correct／incorrect。第一題與最後一題的無效方向按鈕應 disabled。
+
 ---
 
 ## Step 3 — Exam Mode
@@ -52,6 +59,8 @@
 使用者可以設定本次題數。
 
 考試過程中不透露答案。
+
+Exam Mode 使用與 Practice Mode 相同的 Sequential／Random 定義，並可在未作答時 Previous、Next 或 Jump。交卷前題目清單只顯示 answered／unanswered，不得顯示正確答案或正確／錯誤狀態。
 
 完成整場後：
 
@@ -79,7 +88,11 @@
 
 錯題紀錄應能跨程式啟動保留。
 
+Wrong Answer Mode 從目前錯題 pool 建立 session，使用相同的 Sequential／Random 選擇，導航與狀態保留行為同 Practice Mode。
+
 實際儲存格式由實作決定，但保持簡單且可靠。
+
+錯題以 `(bank.id, question.id)` 識別且不得重複。Practice／Exam 答錯時加入，答對不移除；Wrong Answer Mode 答對時移除、答錯時保留。成功載入 bank 後只清理該 bank 已不存在的 stale question IDs。GUI 提供經確認後清除目前所選題庫錯題的功能，不影響其他 bank。
 
 ---
 
@@ -121,4 +134,3 @@
 修正明顯的 UX 問題與錯誤。
 
 完成後，Ultimate_examer 應是一個可以直接日常使用的第一版，而不是只有功能展示的 prototype。
-

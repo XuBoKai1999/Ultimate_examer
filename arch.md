@@ -36,6 +36,19 @@ GUI 應允許使用者：
 
 程式提供三種模式。
 
+### 題目順序
+
+每次開始新的作答 session 時，使用者可以選擇：
+
+* Sequential：依使用者選取題庫的順序組合題目；各題庫的 section 與 question 維持 JSON array 原始順序。
+* Random：將所有選中題庫共同形成的題目 pool 隨機排序；同一 session 內每題只出現一次。
+
+三種模式使用相同的順序定義。不提供 seed、加權隨機或 adaptive sampling。
+
+### 題目導航
+
+三種模式都支援 Previous、Next 與題目清單（Jump to Question）。使用者不需要先作答即可離開目前題目，未作答題目保持 unanswered 並可稍後返回。第一題的 Previous 與最後一題的 Next 應 disabled，不循環跳轉。
+
 ### 1. Exam Mode
 
 模擬正式考試。
@@ -44,6 +57,8 @@ GUI 應允許使用者：
 * 派發題目後不立即顯示答案。
 * 完成整場考試後統一批改。
 * 顯示得分與答題結果。
+* 交卷前可 Previous、Next 或 Jump，題目清單只顯示 answered／unanswered。
+* 交卷前不得顯示正確答案或正確／錯誤狀態。
 
 ### 2. Practice Mode
 
@@ -53,7 +68,8 @@ GUI 應允許使用者：
 * 使用者選擇答案後立即判定。
 * 顯示正確答案。
 * 答對與答錯應有明顯視覺區別，例如綠色與紅色。
-* 完成後繼續下一題。
+* 已作答題目的選擇與判定結果在導航後仍須保留，且不可重新作答。
+* 題目清單顯示 unanswered、correct 或 incorrect，並可直接跳題。
 
 ### 3. Wrong Answer Mode
 
@@ -65,8 +81,12 @@ GUI 應允許使用者：
 * 作答後立即判定。
 * 顯示正確答案。
 * 提供正確／錯誤視覺回饋。
+* 使用與 Practice Mode 相同的 Sequential／Random、導航及狀態保留行為。
+* 在 Wrong Answer Mode 答對時，從錯題紀錄移除；答錯時繼續保留，下一個 session 才反映移除結果。
 
 程式需要保存足以支援錯題練習的紀錄。
+
+錯題以 `(bank.id, question.id)` 識別。Practice 與 Exam 答錯時加入，答對不影響既有紀錄；同題不得重複。成功載入 canonical bank 時，可清除該 bank 已不存在的題目 ID，但不得影響未載入的其他 bank。GUI 應能在確認後清除目前所選題庫的錯題，不影響其他 bank。
 
 ---
 
@@ -139,4 +159,3 @@ GUI 支援中文與英文。
 7. 將答錯題目納入錯題紀錄並再次練習。
 8. 切換中英文 GUI。
 9. 使用快捷鍵或 GUI 調整字體大小。
-
